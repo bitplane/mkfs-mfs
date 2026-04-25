@@ -1,0 +1,29 @@
+[package]
+name = "mkfs-mfs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "WTFPL"
+authors = ["Gareth Davidson <gaz@bitplane.net>"]
+repository = "https://github.com/bitplane/mkfs-mfs"
+homepage = "https://bitplane.net/dev/rust/mkfs-mfs"
+description = "Create Macintosh File System (MFS) disk images"
+readme = "README.md"
+keywords = ["mfs", "macintosh", "filesystem", "mkfs", "retro"]
+categories = ["command-line-utilities", "filesystem"]
+
+[[bin]]
+name = "mkfs-mfs"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
