@@ -237,8 +237,9 @@ impl Mfs {
     }
 
     fn populate(&mut self, src_path: &Path, prefix: &str) -> anyhow::Result<()> {
-        for entry in fs::read_dir(src_path)? {
-            let entry = entry?;
+        let mut entries = fs::read_dir(src_path)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
             let path = entry.path();
             let raw_name = entry.file_name();
             let name = raw_name
@@ -504,6 +505,24 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn source_enumeration_has_stable_order() {
+        let src = TempDir::new().unwrap();
+        for name in ["z", "a", "m"] {
+            File::create(src.path().join(name)).unwrap();
+        }
+        let mut mfs = Mfs::new(400).unwrap();
+        mfs.populate_root(src.path()).unwrap();
+        let base = mfs.dir_start as usize * 512;
+        for (index, name) in [b'a', b'm', b'z'].into_iter().enumerate() {
+            assert_eq!(mfs.image[base + index * 52 + 51], name);
+            assert_eq!(
+                read_be32(&mfs.image, base + index * 52 + 18),
+                index as u32 + 1
+            );
+        }
     }
 
     #[test]
