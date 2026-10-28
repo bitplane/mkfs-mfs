@@ -52,6 +52,8 @@ are skipped with a warning.
 - Filenames up to 255 bytes (truncated longer with a warning). For compatibility
   with the 128 KB Macintosh ROM File Manager, keep names to 31 bytes or fewer.
   Names and volume labels are NFC-normalized and use MacRoman; unrepresentable characters are rejected.
+  This uses the modern MacRoman mapping: byte 0xDB is the euro sign;
+  MFS-era systems display that byte as the currency sign instead.
   Names that collide after truncation or classic Mac case-insensitive comparison are rejected.
 - File-extension → Type/Creator mapping for `.txt`, `.text`, `.c`, `.h`
   (TEXT/ttxt) and `.bin` (BINA/hDmp). Everything else is `????`/`????`.
