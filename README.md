@@ -55,6 +55,9 @@ are skipped with a warning.
   This uses the modern MacRoman mapping: byte 0xDB is the euro sign;
   MFS-era systems display that byte as the currency sign instead.
   Names that collide after truncation or classic Mac case-insensitive comparison are rejected.
+- File timestamps are set at image creation; source timestamps are not preserved.
+  Sorted traversal stabilizes file ordering, but timestamps make images differ
+  between runs.
 - File-extension → Type/Creator mapping for `.txt`, `.text`, `.c`, `.h`
   (TEXT/ttxt) and `.bin` (BINA/hDmp). Everything else is `????`/`????`.
 
