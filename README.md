@@ -49,7 +49,8 @@ are skipped with a warning.
   216 at 401–2048 KB, and 432 above that; long names reduce these limits.
 - 640 allocation blocks maximum for compatibility with two-sector MDB readers.
   Allocation blocks grow with image size (minimum 1 KB).
-- Filenames up to 255 bytes (truncated longer with a warning).
+- Filenames up to 255 bytes (truncated longer with a warning). For compatibility
+  with the 128 KB Macintosh ROM File Manager, keep names to 31 bytes or fewer.
   Names and volume labels are NFC-normalized and use MacRoman; unrepresentable characters are rejected.
   Names that collide after truncation or classic Mac case-insensitive comparison are rejected.
 - File-extension → Type/Creator mapping for `.txt`, `.text`, `.c`, `.h`
