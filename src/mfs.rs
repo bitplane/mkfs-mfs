@@ -9,7 +9,7 @@
 //! sectors 0..2:                         boot blocks
 //! sectors 2..(2 + mdb_blocks):          MDB volume info + 12-bit alloc map
 //! sectors (2 + mdb_blocks)..dir_end:    file directory
-//! sectors dir_end..(end - mdb_blocks):  allocation blocks (1 KB each)
+//! sectors dir_end..(end - mdb_blocks):  allocation blocks (variable size)
 //! sectors (end - mdb_blocks)..end:      backup MDB (mirror of primary)
 //! ```
 //!
@@ -22,7 +22,9 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const BLOCK_SIZE: usize = 512;
-const ALLOC_BLK_SIZE: usize = 1024;
+const MIN_ALLOC_BLK_SIZE: u32 = 1024;
+const MDB_BLOCKS: u32 = 2;
+const MAP_CAPACITY: u32 = (MDB_BLOCKS * BLOCK_SIZE as u32 - 64) * 2 / 3;
 pub const SIGNATURE: u16 = 0xD2D7;
 const MAX_FILES: u32 = 4094;
 // Block numbers 0, 1, and 0xFFF are reserved.
@@ -52,6 +54,7 @@ pub struct Mfs {
     image: Vec<u8>,
     image_size: u32,
     num_alloc_blks: u32,
+    alloc_blk_size: u32,
     /// First allocation block, expressed in 512-byte sectors.
     alloc_blk_start: u32,
     /// First sector of the directory area.
@@ -97,35 +100,20 @@ impl Mfs {
             12
         };
 
-        // MDB+map sizing is circular: more alloc blocks → bigger map →
-        // bigger MDB → fewer alloc blocks. Iterate until it converges.
-        let mut mdb_blocks: u32 = 2;
-        let mut num_alloc_blks: u32 = 0;
-        let mut alloc_blk_start: u32 = 0;
-        let mut dir_start: u32 = 0;
-        for _ in 0..8 {
-            if total_blocks <= 2 + mdb_blocks + dir_blocks + mdb_blocks + 1 {
-                anyhow::bail!("volume too small for layout");
-            }
-            let alloc_start = 2 + mdb_blocks + dir_blocks;
-            let alloc_area = (total_blocks - alloc_start - mdb_blocks) * BLOCK_SIZE as u32;
-            let mut nab = alloc_area / ALLOC_BLK_SIZE as u32;
-            if nab > MAX_ALLOC_BLKS {
-                nab = MAX_ALLOC_BLKS;
-            }
-            let map_bytes = (nab * 12).div_ceil(8);
-            let needed = (0x40 + map_bytes).div_ceil(BLOCK_SIZE as u32);
-            if needed <= mdb_blocks {
-                num_alloc_blks = nab;
-                alloc_blk_start = alloc_start;
-                dir_start = 2 + mdb_blocks;
-                break;
-            }
-            mdb_blocks = needed;
+        // Keep the MDB in sectors 2 and 3 for classic readers. Grow allocation
+        // units, rather than the map, to cover larger volumes.
+        let mdb_blocks = MDB_BLOCKS;
+        let dir_start = 2 + mdb_blocks;
+        let alloc_blk_start = dir_start + dir_blocks;
+        if total_blocks < alloc_blk_start + mdb_blocks + 2 {
+            anyhow::bail!("volume too small for layout");
         }
-        if alloc_blk_start == 0 {
-            anyhow::bail!("MDB sizing did not converge");
-        }
+        let alloc_area = (total_blocks - alloc_blk_start - mdb_blocks) * BLOCK_SIZE as u32;
+        let limit = MAP_CAPACITY.min(MAX_ALLOC_BLKS);
+        let alloc_blk_size =
+            alloc_area.div_ceil(limit).div_ceil(BLOCK_SIZE as u32) * BLOCK_SIZE as u32;
+        let alloc_blk_size = alloc_blk_size.max(MIN_ALLOC_BLK_SIZE);
+        let num_alloc_blks = alloc_area / alloc_blk_size;
 
         let now_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -137,6 +125,7 @@ impl Mfs {
             image: vec![0u8; image_size as usize],
             image_size,
             num_alloc_blks,
+            alloc_blk_size,
             alloc_blk_start,
             dir_start,
             dir_blocks,
@@ -247,16 +236,16 @@ impl Mfs {
         let mut first_blk: u32 = 0;
         let mut phys_len: u32 = 0;
         if size > 0 {
-            let num_blocks = size.div_ceil(ALLOC_BLK_SIZE as u32);
+            let num_blocks = size.div_ceil(self.alloc_blk_size);
             first_blk = self.alloc_blocks(num_blocks)?;
-            phys_len = num_blocks * ALLOC_BLK_SIZE as u32;
+            phys_len = num_blocks * self.alloc_blk_size;
 
             let mut remaining = size as usize;
             let mut src_off = 0usize;
             for i in 0..num_blocks {
                 let off = (self.alloc_blk_start as usize) * BLOCK_SIZE
-                    + (first_blk as usize + i as usize) * ALLOC_BLK_SIZE;
-                let chunk = remaining.min(ALLOC_BLK_SIZE);
+                    + (first_blk as usize + i as usize) * self.alloc_blk_size as usize;
+                let chunk = remaining.min(self.alloc_blk_size as usize);
                 self.image[off..off + chunk].copy_from_slice(&data[src_off..src_off + chunk]);
                 src_off += chunk;
                 remaining -= chunk;
@@ -348,8 +337,8 @@ impl Mfs {
         put_be16(mdb, 0x0E, self.dir_start as u16); // drDirSt
         put_be16(mdb, 0x10, self.dir_blocks as u16); // drBlLen
         put_be16(mdb, 0x12, self.num_alloc_blks as u16); // drNmAlBlks
-        put_be32(mdb, 0x14, ALLOC_BLK_SIZE as u32); // drAlBlkSiz
-        put_be32(mdb, 0x18, ALLOC_BLK_SIZE as u32); // drClpSiz (default clump)
+        put_be32(mdb, 0x14, self.alloc_blk_size); // drAlBlkSiz
+        put_be32(mdb, 0x18, self.alloc_blk_size); // drClpSiz (default clump)
         put_be16(mdb, 0x1C, self.alloc_blk_start as u16); // drAlBlSt
         put_be32(mdb, 0x1E, self.next_file_num); // drNxtFNum
         put_be16(mdb, 0x22, free_blks); // drFreeBks
@@ -418,6 +407,26 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn larger_images_keep_a_two_sector_mdb_and_round_trip_data() {
+        for size in [400, 655, 656, 800, 1440, 4200, 8192] {
+            let mut mfs = Mfs::new(size).unwrap();
+            assert_eq!(mfs.dir_start, 4);
+            assert!(mfs.num_alloc_blks <= 640);
+            let data: Vec<u8> = (0..mfs.alloc_blk_size as usize * 3 + 1)
+                .map(|i| (i % 251) as u8)
+                .collect();
+            mfs.add_file("payload", &data, data.len() as u32, b"BINA", b"hDmp")
+                .unwrap();
+            mfs.write_mdb();
+            let start = read_be16(&mfs.image, 1024 + 0x1C) as usize * 512;
+            assert_eq!(&mfs.image[start..start + data.len()], data);
+            assert_eq!(read_be32(&mfs.image, 1024 + 0x14), mfs.alloc_blk_size);
+            assert_eq!(&mfs.image[1088..1094], &[0, 0x30, 4, 0, 0x50, 1]);
+            assert_eq!(&mfs.image[1024..2048], &mfs.image[mfs.image.len() - 1024..]);
+        }
     }
 
     #[test]
