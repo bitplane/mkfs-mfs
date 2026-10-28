@@ -123,6 +123,22 @@ fn read_bounded(reader: impl Read, capacity: u64) -> anyhow::Result<Vec<u8>> {
     Ok(data)
 }
 
+// Keep an existing image intact until the replacement is fully written and synced.
+fn write_atomic(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> std::io::Result<()>,
+) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    write(temp.as_file_mut())?;
+    temp.as_file().sync_all()?;
+    temp.persist(path)?;
+    Ok(())
+}
+
 /// Stats reported after writing.
 pub struct Stats {
     pub num_alloc_blks: u32,
@@ -405,9 +421,8 @@ impl Mfs {
     pub fn write_to(mut self, path: &Path) -> anyhow::Result<Stats> {
         self.write_mdb();
 
-        let mut f = File::create(path)?;
-        f.write_all(&self.image)?;
-        f.sync_all()?;
+        write_atomic(path, |f| f.write_all(&self.image))
+            .with_context(|| format!("writing image {}", path.display()))?;
 
         Ok(Stats {
             num_alloc_blks: self.num_alloc_blks,
@@ -506,6 +521,22 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn failed_replacement_preserves_existing_image() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("image.dsk");
+        fs::write(&path, b"original").unwrap();
+        let result = write_atomic(&path, |f| {
+            f.write_all(b"partial")?;
+            Err(std::io::Error::other("simulated write failure"))
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        write_atomic(&path, |f| f.write_all(b"replacement")).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"replacement");
     }
 
     #[test]
