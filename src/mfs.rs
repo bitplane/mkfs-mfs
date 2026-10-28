@@ -260,6 +260,15 @@ impl Mfs {
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
             let path = entry.path();
+            let meta = fs::symlink_metadata(&path)
+                .with_context(|| format!("reading metadata for {}", path.display()))?;
+            if !meta.is_file() && !meta.is_dir() {
+                eprintln!(
+                    "mkfs-mfs: warning: skipping non-regular input: {}",
+                    path.display()
+                );
+                continue;
+            }
             let raw_name = entry.file_name();
             let name = raw_name
                 .to_str()
@@ -276,8 +285,6 @@ impl Mfs {
                 format!("{prefix}:{name}")
             };
 
-            let meta = fs::symlink_metadata(&path)
-                .with_context(|| format!("reading metadata for {}", path.display()))?;
             if meta.is_dir() {
                 self.populate(&path, &flat_name)?;
             } else if meta.is_file() {
@@ -300,7 +307,6 @@ impl Mfs {
                 let (type_code, creator) = type_for_ext(name);
                 self.add_file(&flat_name, &data, size, type_code, creator)?;
             }
-            // Symlinks, devices, etc. are skipped.
         }
         Ok(())
     }

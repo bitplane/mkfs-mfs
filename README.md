@@ -40,7 +40,8 @@ mkfs-mfs -d ./payload -s 800 out.dsk
 ```
 
 Source filenames containing `:` are rejected (would clash with the
-flattening path separator).
+flattening path separator). Symlinks, devices, and other non-regular inputs
+are skipped with a warning.
 
 ## Limits
 
