@@ -16,6 +16,7 @@
 //! All on-disk values are big-endian. The 12-bit allocation map packs two
 //! entries into three bytes (`AB CD EF` -> `0xABC, 0xDEF`).
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -71,6 +72,7 @@ pub struct Mfs {
     dir_used: u32,
     next_file_num: u32,
     file_count: u32,
+    file_names: HashSet<Vec<u8>>,
     /// Volume name (1..=27 bytes).
     volume_name: String,
     /// Current time encoded as Mac epoch seconds.
@@ -135,6 +137,7 @@ impl Mfs {
             dir_used: 0,
             next_file_num: 1,
             file_count: 0,
+            file_names: HashSet::new(),
             volume_name: DEFAULT_VOLUME_NAME.to_string(),
             now_mac,
         })
@@ -211,6 +214,11 @@ impl Mfs {
             raw_len
         };
 
+        let stored_name = name.as_bytes()[..name_len].to_vec();
+        if self.file_names.contains(&stored_name) {
+            anyhow::bail!("duplicate filename after truncation: {name}");
+        }
+
         // Entry: 0x32 fixed header + 1 length byte + name, padded to even.
         let entry_size_unpadded = 0x32 + 1 + name_len;
         let entry_size = if entry_size_unpadded & 1 == 1 {
@@ -282,6 +290,7 @@ impl Mfs {
 
         self.dir_used += entry_size;
         self.file_count += 1;
+        self.file_names.insert(stored_name);
         Ok(())
     }
 
@@ -407,6 +416,21 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn truncation_collisions_are_rejected_without_allocating() {
+        let mut mfs = Mfs::new(400).unwrap();
+        let prefix = "a".repeat(255);
+        mfs.add_file(&format!("{prefix}A"), b"a", 1, b"TEXT", b"ttxt")
+            .unwrap();
+        let before = mfs.next_alloc_blk;
+        let err = mfs
+            .add_file(&format!("{prefix}B"), b"b", 1, b"TEXT", b"ttxt")
+            .unwrap_err();
+        assert!(err.to_string().contains("duplicate filename"));
+        assert_eq!(mfs.file_count, 1);
+        assert_eq!(mfs.next_alloc_blk, before);
     }
 
     #[test]
