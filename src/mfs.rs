@@ -30,7 +30,6 @@ const MIN_ALLOC_BLK_SIZE: u32 = 1024;
 const MDB_BLOCKS: u32 = 2;
 const MAP_CAPACITY: u32 = (MDB_BLOCKS * BLOCK_SIZE as u32 - 64) * 2 / 3;
 pub const SIGNATURE: u16 = 0xD2D7;
-const MAX_FILES: u32 = 4094;
 // Block numbers 0, 1, and 0xFFF are reserved.
 const MAX_ALLOC_BLKS: u32 = 4093;
 const ABLK_FREE: u16 = 0x000;
@@ -304,10 +303,6 @@ impl Mfs {
         type_code: &[u8; 4],
         creator: &[u8; 4],
     ) -> anyhow::Result<()> {
-        if self.file_count >= MAX_FILES {
-            anyhow::bail!("too many files");
-        }
-
         let encoded = encode_mac_roman(name)?;
         let raw_len = encoded.len();
         let name_len = if raw_len > 255 {
@@ -524,6 +519,21 @@ mod tests {
     }
 
     #[test]
+    fn directory_capacity_limits_empty_files() {
+        let mut mfs = Mfs::new(400).unwrap();
+        for i in 0..108 {
+            mfs.add_file(&format!("{i:03}"), b"", 0, b"????", b"????")
+                .unwrap();
+        }
+        assert!(mfs
+            .add_file("end", b"", 0, b"????", b"????")
+            .unwrap_err()
+            .to_string()
+            .contains("directory full"));
+        assert_eq!(mfs.file_count, 108);
+    }
+
+    #[test]
     fn failed_replacement_preserves_existing_image() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("image.dsk");
@@ -650,11 +660,15 @@ mod tests {
     }
 
     #[test]
-    fn allocation_chain_never_uses_reserved_block_number() {
+    fn allocation_chain_covers_capacity_and_rejects_overflow() {
         let mut mfs = Mfs::new(4200).unwrap();
         let count = mfs.num_alloc_blks;
         mfs.alloc_blocks(count).unwrap();
-        assert!(mfs.blk_map.iter().all(|&link| link != 0xFFF));
+        assert!(count <= MAP_CAPACITY);
+        assert_eq!(
+            mfs.blk_map[..count as usize - 1],
+            (3..count as u16 + 2).collect::<Vec<_>>()
+        );
         assert_eq!(mfs.blk_map.last(), Some(&ABLK_LAST));
         assert!(mfs.alloc_blocks(1).is_err());
     }

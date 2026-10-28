@@ -44,7 +44,8 @@ flattening path separator).
 
 ## Limits
 
-- 4094 files maximum (12-bit map).
+- File count is limited by the fixed directory: at most 108 files at 400 KB,
+  216 at 401–2048 KB, and 432 above that; long names reduce these limits.
 - 640 allocation blocks maximum for compatibility with two-sector MDB readers.
   Allocation blocks grow with image size (minimum 1 KB).
 - Filenames up to 255 bytes (truncated longer with a warning).
