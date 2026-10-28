@@ -1,0 +1,6 @@
+# `just release [level]` drives this via cargo-release.
+publish = false            # GitHub CI publishes to crates.io
+verify = false             # `just check` is the pre-release gate
+push = true                # pushing the v* tag triggers the CI release
+tag-name = "v{{version}}"
+allow-branch = ["master"]
