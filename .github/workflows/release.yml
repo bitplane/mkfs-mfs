@@ -176,7 +176,7 @@ jobs:
   # ----------------------------------------------------------------------
   publish-crates:
     name: Publish to crates.io
-    needs: [verify-tag, test]
+    needs: [verify-tag, test, build]
     runs-on: ubuntu-latest
     environment: release
     permissions:
