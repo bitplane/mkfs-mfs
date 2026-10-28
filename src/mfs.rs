@@ -45,6 +45,45 @@ fn put_be32(buf: &mut [u8], off: usize, v: u32) {
     buf[off..off + 4].copy_from_slice(&v.to_be_bytes());
 }
 
+// Unicode mapping for Macintosh Roman bytes 0x80..=0xFF.
+const MAC_ROMAN_HIGH: [char; 128] = [
+    '\u{c4}', '\u{c5}', '\u{c7}', '\u{c9}', '\u{d1}', '\u{d6}', '\u{dc}', '\u{e1}', '\u{e0}',
+    '\u{e2}', '\u{e4}', '\u{e3}', '\u{e5}', '\u{e7}', '\u{e9}', '\u{e8}', '\u{ea}', '\u{eb}',
+    '\u{ed}', '\u{ec}', '\u{ee}', '\u{ef}', '\u{f1}', '\u{f3}', '\u{f2}', '\u{f4}', '\u{f6}',
+    '\u{f5}', '\u{fa}', '\u{f9}', '\u{fb}', '\u{fc}', '\u{2020}', '\u{b0}', '\u{a2}', '\u{a3}',
+    '\u{a7}', '\u{2022}', '\u{b6}', '\u{df}', '\u{ae}', '\u{a9}', '\u{2122}', '\u{b4}', '\u{a8}',
+    '\u{2260}', '\u{c6}', '\u{d8}', '\u{221e}', '\u{b1}', '\u{2264}', '\u{2265}', '\u{a5}',
+    '\u{b5}', '\u{2202}', '\u{2211}', '\u{220f}', '\u{3c0}', '\u{222b}', '\u{aa}', '\u{ba}',
+    '\u{3a9}', '\u{e6}', '\u{f8}', '\u{bf}', '\u{a1}', '\u{ac}', '\u{221a}', '\u{192}', '\u{2248}',
+    '\u{2206}', '\u{ab}', '\u{bb}', '\u{2026}', '\u{a0}', '\u{c0}', '\u{c3}', '\u{d5}', '\u{152}',
+    '\u{153}', '\u{2013}', '\u{2014}', '\u{201c}', '\u{201d}', '\u{2018}', '\u{2019}', '\u{f7}',
+    '\u{25ca}', '\u{ff}', '\u{178}', '\u{2044}', '\u{20ac}', '\u{2039}', '\u{203a}', '\u{fb01}',
+    '\u{fb02}', '\u{2021}', '\u{b7}', '\u{201a}', '\u{201e}', '\u{2030}', '\u{c2}', '\u{ca}',
+    '\u{c1}', '\u{cb}', '\u{c8}', '\u{cd}', '\u{ce}', '\u{cf}', '\u{cc}', '\u{d3}', '\u{d4}',
+    '\u{f8ff}', '\u{d2}', '\u{da}', '\u{db}', '\u{d9}', '\u{131}', '\u{2c6}', '\u{2dc}', '\u{af}',
+    '\u{2d8}', '\u{2d9}', '\u{2da}', '\u{b8}', '\u{2dd}', '\u{2db}', '\u{2c7}',
+];
+
+fn encode_mac_roman(name: &str) -> anyhow::Result<Vec<u8>> {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii() {
+                Ok(c as u8)
+            } else {
+                MAC_ROMAN_HIGH
+                    .iter()
+                    .position(|&mapped| mapped == c)
+                    .map(|i| i as u8 + 128)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "character {c:?} in {name:?} is not representable in MacRoman"
+                        )
+                    })
+            }
+        })
+        .collect()
+}
+
 /// Stats reported after writing.
 pub struct Stats {
     pub num_alloc_blks: u32,
@@ -74,7 +113,7 @@ pub struct Mfs {
     file_count: u32,
     file_names: HashSet<Vec<u8>>,
     /// Volume name (1..=27 bytes).
-    volume_name: String,
+    volume_name: Vec<u8>,
     /// Current time encoded as Mac epoch seconds.
     now_mac: u32,
 }
@@ -138,7 +177,7 @@ impl Mfs {
             next_file_num: 1,
             file_count: 0,
             file_names: HashSet::new(),
-            volume_name: DEFAULT_VOLUME_NAME.to_string(),
+            volume_name: DEFAULT_VOLUME_NAME.as_bytes().to_vec(),
             now_mac,
         })
     }
@@ -147,10 +186,11 @@ impl Mfs {
         if name.is_empty() {
             anyhow::bail!("volume name must not be empty");
         }
-        if name.len() > 27 {
+        let encoded = encode_mac_roman(name)?;
+        if encoded.len() > 27 {
             anyhow::bail!("volume name too long (max 27 bytes)");
         }
-        self.volume_name = name.to_string();
+        self.volume_name = encoded;
         Ok(())
     }
 
@@ -206,7 +246,8 @@ impl Mfs {
             anyhow::bail!("too many files");
         }
 
-        let raw_len = name.len();
+        let encoded = encode_mac_roman(name)?;
+        let raw_len = encoded.len();
         let name_len = if raw_len > 255 {
             eprintln!("mkfs-mfs: warning: name truncated to 255 bytes: {name}");
             255usize
@@ -214,7 +255,7 @@ impl Mfs {
             raw_len
         };
 
-        let stored_name = name.as_bytes()[..name_len].to_vec();
+        let stored_name = encoded[..name_len].to_vec();
         if self.file_names.contains(&stored_name) {
             anyhow::bail!("duplicate filename after truncation: {name}");
         }
@@ -286,7 +327,7 @@ impl Mfs {
 
         // Filename
         ent[0x32] = name_len as u8;
-        ent[0x33..0x33 + name_len].copy_from_slice(&name.as_bytes()[..name_len]);
+        ent[0x33..0x33 + name_len].copy_from_slice(&stored_name);
 
         self.dir_used += entry_size;
         self.file_count += 1;
@@ -353,7 +394,7 @@ impl Mfs {
         put_be16(mdb, 0x22, free_blks); // drFreeBks
 
         // Volume name as a Pascal string starting at 0x24.
-        let name_bytes = self.volume_name.as_bytes();
+        let name_bytes = &self.volume_name;
         let n = name_bytes.len().min(27);
         mdb[0x24] = n as u8;
         mdb[0x25..0x25 + n].copy_from_slice(&name_bytes[..n]);
@@ -416,6 +457,25 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn names_use_mac_roman_and_encoded_length_limits() {
+        let mut mfs = Mfs::new(400).unwrap();
+        mfs.set_volume_name(&"é".repeat(27)).unwrap();
+        assert!(mfs.set_volume_name(&"é".repeat(28)).is_err());
+        mfs.add_file("café.txt", b"", 0, b"TEXT", b"ttxt").unwrap();
+        mfs.write_mdb();
+        assert_eq!(&mfs.image[1061..1088], &[0x8e; 27]);
+        let ent = mfs.dir_start as usize * 512;
+        assert_eq!(&mfs.image[ent + 50..ent + 59], b"\x08caf\x8e.txt");
+        assert!(mfs.set_volume_name("😀").is_err());
+        assert!(mfs.add_file("😀", b"", 0, b"????", b"????").is_err());
+        let all: String = MAC_ROMAN_HIGH.iter().collect();
+        assert_eq!(
+            encode_mac_roman(&all).unwrap(),
+            (128..=255).collect::<Vec<u8>>()
+        );
     }
 
     #[test]
