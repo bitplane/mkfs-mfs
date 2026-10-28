@@ -658,6 +658,9 @@ mod tests {
         assert_eq!(&bytes[ent_off + 0x33..ent_off + 0x33 + 9], b"hello.txt");
     }
 
+    // Windows reserves ':' for alternate data streams; it cannot create this
+    // ordinary filename fixture.
+    #[cfg(unix)]
     #[test]
     fn colon_in_filename_is_rejected() {
         let src = TempDir::new().unwrap();
