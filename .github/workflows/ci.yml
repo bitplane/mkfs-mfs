@@ -45,3 +45,15 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets
+
+
+  msrv:
+    name: Minimum Rust version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --locked
