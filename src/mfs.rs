@@ -25,7 +25,8 @@ const BLOCK_SIZE: usize = 512;
 const ALLOC_BLK_SIZE: usize = 1024;
 pub const SIGNATURE: u16 = 0xD2D7;
 const MAX_FILES: u32 = 4094;
-const MAX_ALLOC_BLKS: u32 = 4094;
+// Block numbers 0, 1, and 0xFFF are reserved.
+const MAX_ALLOC_BLKS: u32 = 4093;
 const ABLK_FREE: u16 = 0x000;
 const ABLK_LAST: u16 = 0x001;
 /// Seconds between 1904-01-01 and 1970-01-01 (Mac vs. Unix epoch).
@@ -417,6 +418,16 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn allocation_chain_never_uses_reserved_block_number() {
+        let mut mfs = Mfs::new(4200).unwrap();
+        let count = mfs.num_alloc_blks;
+        mfs.alloc_blocks(count).unwrap();
+        assert!(mfs.blk_map.iter().all(|&link| link != 0xFFF));
+        assert_eq!(mfs.blk_map.last(), Some(&ABLK_LAST));
+        assert!(mfs.alloc_blocks(1).is_err());
     }
 
     #[test]

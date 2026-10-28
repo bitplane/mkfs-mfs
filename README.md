@@ -45,7 +45,7 @@ flattening path separator).
 ## Limits
 
 - 4094 files maximum (12-bit map).
-- 4094 allocation blocks maximum.
+- 4093 allocation blocks maximum.
 - Filenames up to 255 bytes (truncated longer with a warning).
 - File-extension → Type/Creator mapping for `.txt`, `.text`, `.c`, `.h`
   (TEXT/ttxt) and `.bin` (BINA/hDmp). Everything else is `????`/`????`.
