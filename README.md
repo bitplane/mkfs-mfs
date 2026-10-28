@@ -48,7 +48,7 @@ flattening path separator).
 - 640 allocation blocks maximum for compatibility with two-sector MDB readers.
   Allocation blocks grow with image size (minimum 1 KB).
 - Filenames up to 255 bytes (truncated longer with a warning).
-  Names and volume labels use MacRoman; unrepresentable characters are rejected.
+  Names and volume labels are NFC-normalized and use MacRoman; unrepresentable characters are rejected.
   Names that collide after truncation or classic Mac case-insensitive comparison are rejected.
 - File-extension → Type/Creator mapping for `.txt`, `.text`, `.c`, `.h`
   (TEXT/ttxt) and `.bin` (BINA/hDmp). Everything else is `????`/`????`.

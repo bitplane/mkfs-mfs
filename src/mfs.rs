@@ -17,6 +17,7 @@
 //! entries into three bytes (`AB CD EF` -> `0xABC, 0xDEF`).
 
 use anyhow::Context;
+use unicode_normalization::UnicodeNormalization;
 
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -67,7 +68,7 @@ const MAC_ROMAN_HIGH: [char; 128] = [
 ];
 
 fn encode_mac_roman(name: &str) -> anyhow::Result<Vec<u8>> {
-    name.chars()
+    name.nfc()
         .map(|c| {
             if c.is_ascii() {
                 Ok(c as u8)
@@ -505,6 +506,18 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn decomposed_names_encode_and_collide_with_composed_names() {
+        assert_eq!(encode_mac_roman("cafe\u{301}").unwrap(), b"caf\x8e");
+        let mut mfs = Mfs::new(400).unwrap();
+        mfs.set_volume_name("cafe\u{301}").unwrap();
+        assert_eq!(mfs.volume_name, b"caf\x8e");
+        mfs.add_file("café", b"", 0, b"TEXT", b"ttxt").unwrap();
+        assert!(mfs
+            .add_file("cafe\u{301}", b"", 0, b"TEXT", b"ttxt")
+            .is_err());
     }
 
     #[test]
