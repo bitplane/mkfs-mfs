@@ -86,6 +86,32 @@ fn encode_mac_roman(name: &str) -> anyhow::Result<Vec<u8>> {
         .collect()
 }
 
+// Classic Macintosh case-insensitive comparison equivalences, including
+// space/nonbreaking space. Keep diacritics significant. See the caseorder
+// equivalences in https://github.com/torvalds/linux/blob/master/fs/hfs/string.c.
+fn filename_key(name: &[u8]) -> Vec<u8> {
+    name.iter()
+        .map(|&b| match b {
+            b'a'..=b'z' => b.to_ascii_uppercase(),
+            0x8a => 0x80, // ä / Ä
+            0x8c => 0x81, // å / Å
+            0x8d => 0x82, // ç / Ç
+            0x8e => 0x83, // é / É
+            0x96 => 0x84, // ñ / Ñ
+            0x9a => 0x85, // ö / Ö
+            0x9f => 0x86, // ü / Ü
+            0xbe => 0xae, // æ / Æ
+            0xbf => 0xaf, // ø / Ø
+            0xca => b' ',
+            0xcb => 0x88, // À / à
+            0xcc => 0x8b, // Ã / ã
+            0xcd => 0x9b, // Õ / õ
+            0xcf => 0xce, // œ / Œ
+            _ => b,
+        })
+        .collect()
+}
+
 // Read one extra byte to detect growth beyond the capacity checked at open.
 fn read_bounded(reader: impl Read, capacity: u64) -> anyhow::Result<Vec<u8>> {
     let mut data = Vec::new();
@@ -274,8 +300,11 @@ impl Mfs {
         };
 
         let stored_name = encoded[..name_len].to_vec();
-        if self.file_names.contains(&stored_name) {
-            anyhow::bail!("duplicate filename after truncation: {name}");
+        let key = filename_key(&stored_name);
+        if self.file_names.contains(&key) {
+            anyhow::bail!(
+                "duplicate filename after encoding, truncation, and Mac comparison: {name}"
+            );
         }
 
         // Entry: 0x32 fixed header + 1 length byte + name, padded to even.
@@ -349,7 +378,7 @@ impl Mfs {
 
         self.dir_used += entry_size;
         self.file_count += 1;
-        self.file_names.insert(stored_name);
+        self.file_names.insert(key);
         Ok(())
     }
 
@@ -475,6 +504,16 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn macintosh_equivalent_names_collide() {
+        for (a, b) in [("Readme", "README"), ("café", "CAFÉ"), ("a b", "a\u{a0}b")] {
+            let mut mfs = Mfs::new(400).unwrap();
+            mfs.add_file(a, b"", 0, b"????", b"????").unwrap();
+            assert!(mfs.add_file(b, b"", 0, b"????", b"????").is_err());
+        }
+        assert_ne!(filename_key(b"cafe"), filename_key(b"caf\x8e"));
     }
 
     #[test]
