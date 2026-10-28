@@ -15,7 +15,7 @@ classic Mac emulators (Mini vMac, Basilisk II) and modern tools like
 From crates.io:
 
 ```bash
-cargo install mkfs-mfs
+cargo install --locked mkfs-mfs
 ```
 
 This installs a binary called `mkfs-mfs`. Pre-built binaries for Linux
