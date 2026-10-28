@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-targets
+      - run: cargo test --all-targets --locked
 
   # ----------------------------------------------------------------------
   # 3. Build release binaries for the supported targets.
