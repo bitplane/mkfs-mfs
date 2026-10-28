@@ -16,6 +16,8 @@
 //! All on-disk values are big-endian. The 12-bit allocation map packs two
 //! entries into three bytes (`AB CD EF` -> `0xABC, 0xDEF`).
 
+use anyhow::Context;
+
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -82,6 +84,16 @@ fn encode_mac_roman(name: &str) -> anyhow::Result<Vec<u8>> {
             }
         })
         .collect()
+}
+
+// Read one extra byte to detect growth beyond the capacity checked at open.
+fn read_bounded(reader: impl Read, capacity: u64) -> anyhow::Result<Vec<u8>> {
+    let mut data = Vec::new();
+    reader.take(capacity + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > capacity {
+        anyhow::bail!("file exceeds remaining image capacity");
+    }
+    Ok(data)
 }
 
 /// Stats reported after writing.
@@ -222,8 +234,14 @@ impl Mfs {
             if meta.is_dir() {
                 self.populate(&path, &flat_name)?;
             } else if meta.is_file() {
-                let mut data = Vec::new();
-                File::open(&path)?.read_to_end(&mut data)?;
+                let file = File::open(&path)?;
+                let remaining = u64::from(self.num_alloc_blks - self.next_alloc_blk)
+                    * u64::from(self.alloc_blk_size);
+                if file.metadata()?.len() > remaining {
+                    anyhow::bail!("file exceeds remaining image capacity: {}", path.display());
+                }
+                let data = read_bounded(file, remaining)
+                    .with_context(|| format!("reading {}", path.display()))?;
                 let size = u32::try_from(data.len())
                     .map_err(|_| anyhow::anyhow!("file exceeds 4 GB: {}", path.display()))?;
                 let (type_code, creator) = type_for_ext(name);
@@ -457,6 +475,22 @@ mod tests {
     }
     fn read_be32(buf: &[u8], off: usize) -> u32 {
         u32::from_be_bytes(buf[off..off + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn oversized_inputs_are_bounded_and_rejected() {
+        assert_eq!(read_bounded(&b"abc"[..], 3).unwrap(), b"abc");
+        assert!(read_bounded(std::io::repeat(0), 3).is_err());
+        assert!(read_bounded(&b"x"[..], 0).is_err());
+        let src = TempDir::new().unwrap();
+        File::create(src.path().join("huge"))
+            .unwrap()
+            .set_len(32 * 1024 * 1024)
+            .unwrap();
+        let mut mfs = Mfs::new(400).unwrap();
+        let err = mfs.populate_root(src.path()).unwrap_err();
+        assert!(err.to_string().contains("remaining image capacity"));
+        assert_eq!(mfs.next_alloc_blk, 0);
     }
 
     #[test]
