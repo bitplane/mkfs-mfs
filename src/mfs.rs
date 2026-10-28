@@ -253,7 +253,10 @@ impl Mfs {
     }
 
     fn populate(&mut self, src_path: &Path, prefix: &str) -> anyhow::Result<()> {
-        let mut entries = fs::read_dir(src_path)?.collect::<Result<Vec<_>, _>>()?;
+        let mut entries = fs::read_dir(src_path)
+            .with_context(|| format!("reading directory {}", src_path.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .with_context(|| format!("enumerating directory {}", src_path.display()))?;
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
             let path = entry.path();
@@ -273,14 +276,21 @@ impl Mfs {
                 format!("{prefix}:{name}")
             };
 
-            let meta = fs::symlink_metadata(&path)?;
+            let meta = fs::symlink_metadata(&path)
+                .with_context(|| format!("reading metadata for {}", path.display()))?;
             if meta.is_dir() {
                 self.populate(&path, &flat_name)?;
             } else if meta.is_file() {
-                let file = File::open(&path)?;
+                let file =
+                    File::open(&path).with_context(|| format!("opening {}", path.display()))?;
                 let remaining = u64::from(self.num_alloc_blks - self.next_alloc_blk)
                     * u64::from(self.alloc_blk_size);
-                if file.metadata()?.len() > remaining {
+                if file
+                    .metadata()
+                    .with_context(|| format!("reading metadata for {}", path.display()))?
+                    .len()
+                    > remaining
+                {
                     anyhow::bail!("file exceeds remaining image capacity: {}", path.display());
                 }
                 let data = read_bounded(file, remaining)
