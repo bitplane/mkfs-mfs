@@ -1,7 +1,7 @@
 # Bump the version (patch/minor/major or X.Y.Z), commit, tag and push.
-# Run `just check` first; cargo-release refuses a dirty tree.
+# Validation runs first; cargo-release refuses a dirty tree.
 # GitHub CI publishes the crate and release when the version tag is pushed.
-release level="patch":
+release level="patch": check
     cargo release -p mkfs-mfs {{level}} --execute --no-confirm
 
 # Run local validation before releasing.
